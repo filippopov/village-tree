@@ -33,8 +33,8 @@ RUN apt-get update && apt-get install -y \
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 # Copy crontab
-COPY docker/cron/crontab /etc/cron.d/dochelper-cron
-RUN chmod 0644 /etc/cron.d/dochelper-cron \
+COPY docker/cron/crontab /etc/cron.d/villagetree-cron
+RUN chmod 0644 /etc/cron.d/villagetree-cron \
     && touch /var/log/cron.log
 
 WORKDIR /var/www/backend

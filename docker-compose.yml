@@ -1,0 +1,124 @@
+services:
+  # ──────────────────────────────────────────────
+  # MySQL Database
+  # ──────────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: dochelper_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - dochelper_net
+
+  # ──────────────────────────────────────────────
+  # Backend – PHP 8.3 FPM (Symfony)
+  # ──────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: dochelper_backend
+    restart: unless-stopped
+    working_dir: /var/www/backend
+    command: sh -c "if [ ! -d vendor ] || [ -z \"$$(ls -A vendor 2>/dev/null)\" ]; then composer install --no-interaction --prefer-dist; fi; php-fpm"
+    volumes:
+      - ./backend:/var/www/backend
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      APP_SECRET: ${APP_SECRET:-change_me}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-/var/www/backend/config/jwt/private.pem}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-/var/www/backend/config/jwt/public.pem}
+      JWT_PASSPHRASE: ${JWT_PASSPHRASE:-change_me}
+      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE}?serverVersion=8.0
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - dochelper_net
+
+  # ──────────────────────────────────────────────
+  # Frontend – React (Node 20)
+  # ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    container_name: dochelper_frontend
+    restart: unless-stopped
+    working_dir: /app
+    command: sh -c "npm install --no-audit --no-fund --legacy-peer-deps; npm run dev"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+    networks:
+      - dochelper_net
+
+  # ──────────────────────────────────────────────
+  # Nginx – Reverse Proxy
+  # ──────────────────────────────────────────────
+  nginx:
+    build:
+      context: ./docker/nginx
+      dockerfile: Dockerfile
+    container_name: dochelper_nginx
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8080}:80"
+    volumes:
+      - ./backend:/var/www/backend
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - dochelper_net
+
+  # ──────────────────────────────────────────────
+  # Cron – Scheduled Tasks
+  # ──────────────────────────────────────────────
+  cron:
+    build:
+      context: .
+      dockerfile: docker/cron/Dockerfile
+    container_name: dochelper_cron
+    restart: unless-stopped
+    working_dir: /var/www/backend
+    command: sh -c "if [ ! -d vendor ] || [ -z \"$$(ls -A vendor 2>/dev/null)\" ]; then composer install --no-interaction --prefer-dist; fi; cron -f"
+    volumes:
+      - ./backend:/var/www/backend
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      APP_SECRET: ${APP_SECRET:-change_me}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-/var/www/backend/config/jwt/private.pem}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-/var/www/backend/config/jwt/public.pem}
+      JWT_PASSPHRASE: ${JWT_PASSPHRASE:-change_me}
+      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE}?serverVersion=8.0
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - dochelper_net
+
+volumes:
+  db_data:
+    driver: local
+
+networks:
+  dochelper_net:
+    driver: bridge
